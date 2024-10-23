@@ -42,6 +42,7 @@ int main(int argc, char **argv) {
     bool left_wall = wb_distance_sensor_get_value(prox_sensors[5]) > 80;
     bool left_corner = wb_distance_sensor_get_value(prox_sensors[6]) > 80;
     bool front_wall = wb_distance_sensor_get_value(prox_sensors[7]) > 80;
+    bool right_wall = wb_distance_sensor_get_value(prox_sensors[2]) > 80;  // Check for a wall on the right
 
     double ds_left_value = wb_distance_sensor_get_value(ds_left);
     double ds_right_value = wb_distance_sensor_get_value(ds_right);
@@ -50,20 +51,29 @@ int main(int argc, char **argv) {
     // Read the light sensor value
     double light_value = wb_light_sensor_get_value(light_sensor);
     printf("Light Sensor Value: %f\n", light_value);
-    if (front_wall) {
+
+    // Check if the robot is at a dead-end
+    if (front_wall && left_wall && right_wall) {
+      printf("Dead end detected! Turning around...\n");
       left_speed = MAX_SPEED;
-      right_speed = -MAX_SPEED;
+      right_speed = -MAX_SPEED; // Turn around
     } else {
-      if (left_wall) {
+      // Wall-following behavior
+      if (front_wall) {
         left_speed = MAX_SPEED;
-        right_speed = MAX_SPEED;
+        right_speed = -MAX_SPEED; // Turn when there's a wall in front
       } else {
-        left_speed = MAX_SPEED / 8;
-        right_speed = MAX_SPEED;
-      }
-      if (left_corner) {
-        left_speed = MAX_SPEED;
-        right_speed = MAX_SPEED / 8;
+        if (left_wall) {
+          left_speed = MAX_SPEED;
+          right_speed = MAX_SPEED; // Move forward if there's a wall on the left
+        } else {
+          left_speed = MAX_SPEED / 8;
+          right_speed = MAX_SPEED;  // Turn if there's no wall on the left
+        }
+        if (left_corner) {
+          left_speed = MAX_SPEED;
+          right_speed = MAX_SPEED / 8; // Turn right if a corner is detected
+        }
       }
     }
 
