@@ -4,6 +4,7 @@
 #include <webots/motor.h>
 #include <stdio.h>
 #include <stdbool.h>
+#include <webots/gps.h>
 
 #define TIME_STEP 64  // Time step for simulation in ms
 #define MAX_SPEED 6.28 // Maximum velocity of motor
@@ -37,44 +38,43 @@ int main(int argc, char **argv) {
   double left_speed = MAX_SPEED;
   double right_speed = MAX_SPEED;
 
+  // Arrays for storing dead-end data
+  double dead_end_coordinates[10][3];  // Store coordinates for up to 10 dead-ends
+  int dead_end_count = 0;
+
   // Main loop
   while (wb_robot_step(TIME_STEP) != -1) {
     bool left_wall = wb_distance_sensor_get_value(prox_sensors[5]) > 80;
     bool left_corner = wb_distance_sensor_get_value(prox_sensors[6]) > 80;
     bool front_wall = wb_distance_sensor_get_value(prox_sensors[7]) > 80;
-    bool right_wall = wb_distance_sensor_get_value(prox_sensors[2]) > 80;  // Check for a wall on the right
 
     double ds_left_value = wb_distance_sensor_get_value(ds_left);
     double ds_right_value = wb_distance_sensor_get_value(ds_right);
     printf("Left Sensor: %lf, Right Sensor: %lf\n", ds_left_value, ds_right_value);
 
-    // Read the light sensor value
-    double light_value = wb_light_sensor_get_value(light_sensor);
-    printf("Light Sensor Value: %f\n", light_value);
+    // Check if the robot is in a dead-end (similar to previous logic)
+    if (front_wall && left_wall) {
+      const double *gps_values = wb_gps_get_values(gps);
 
-    // Check if the robot is at a dead-end
-    if (front_wall && left_wall && right_wall) {
-      printf("Dead end detected! Turning around...\n");
-      left_speed = MAX_SPEED;
-      right_speed = -MAX_SPEED; // Turn around
-    } else {
-      // Wall-following behavior
-      if (front_wall) {
-        left_speed = MAX_SPEED;
-        right_speed = -MAX_SPEED; // Turn when there's a wall in front
-      } else {
-        if (left_wall) {
-          left_speed = MAX_SPEED;
-          right_speed = MAX_SPEED; // Move forward if there's a wall on the left
-        } else {
-          left_speed = MAX_SPEED / 8;
-          right_speed = MAX_SPEED;  // Turn if there's no wall on the left
-        }
-        if (left_corner) {
-          left_speed = MAX_SPEED;
-          right_speed = MAX_SPEED / 8; // Turn right if a corner is detected
-        }
+      if (dead_end_count < 10) {
+        // Store the GPS coordinates of the dead-end
+        dead_end_coordinates[dead_end_count][0] = gps_values[0];
+        dead_end_coordinates[dead_end_count][1] = gps_values[1];
+        dead_end_coordinates[dead_end_count][2] = gps_values[2];
+
+        printf("Dead-end %d reached at coordinates: (%f, %f, %f)\n", dead_end_count + 1, 
+               gps_values[0], gps_values[1], gps_values[2]);
+
+        dead_end_count++;
       }
+    }
+
+    if (left_wall) {
+      left_speed = MAX_SPEED;
+      right_speed = MAX_SPEED;
+    } else {
+      left_speed = MAX_SPEED / 8;
+      right_speed = MAX_SPEED;
     }
 
     wb_motor_set_velocity(left_motor, left_speed);
