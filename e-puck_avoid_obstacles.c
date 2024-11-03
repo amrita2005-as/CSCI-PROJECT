@@ -38,8 +38,9 @@ int main(int argc, char **argv) {
   double left_speed = MAX_SPEED;
   double right_speed = MAX_SPEED;
 
-  // Arrays for storing dead-end data
+  // Arrays for storing dead-end data (coordinates and light intensity)
   double dead_end_coordinates[10][3];  // Store coordinates for up to 10 dead-ends
+  double dead_end_light[10];            // Store light intensity for up to 10 dead-ends
   int dead_end_count = 0;
 
   // Main loop
@@ -52,18 +53,24 @@ int main(int argc, char **argv) {
     double ds_right_value = wb_distance_sensor_get_value(ds_right);
     printf("Left Sensor: %lf, Right Sensor: %lf\n", ds_left_value, ds_right_value);
 
+    // Read the light sensor value
+    double light_value = wb_light_sensor_get_value(light_sensor);
+    printf("Light Sensor Value: %f\n", light_value);
+
     // Check if the robot is in a dead-end (similar to previous logic)
     if (front_wall && left_wall) {
       const double *gps_values = wb_gps_get_values(gps);
 
       if (dead_end_count < 10) {
-        // Store the GPS coordinates of the dead-end
+        // Store the GPS coordinates and light intensity at the dead-end
         dead_end_coordinates[dead_end_count][0] = gps_values[0];
         dead_end_coordinates[dead_end_count][1] = gps_values[1];
         dead_end_coordinates[dead_end_count][2] = gps_values[2];
+        dead_end_light[dead_end_count] = light_value;  // Store the light intensity
 
         printf("Dead-end %d reached at coordinates: (%f, %f, %f)\n", dead_end_count + 1, 
                gps_values[0], gps_values[1], gps_values[2]);
+        printf("Light intensity at dead-end %d: %f\n", dead_end_count + 1, light_value);
 
         dead_end_count++;
       }
