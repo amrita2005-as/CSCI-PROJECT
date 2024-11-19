@@ -13,8 +13,9 @@
 #define GPS_THRESHOLD 0.07 
 
 bool is_dead_end();
+double regulate_speed();
 
-double clamp(double value, double min_value, double max_value) {
+double regulate_speed(double value, double min_value, double max_value) {
     if (value < min_value) {
         return min_value;
     } else if (value > max_value) {
@@ -168,9 +169,9 @@ int main(int argc, char **argv) {
       }
     }
 
-    // Apply the clamp function to ensure the speed stays within bounds
-    left_speed = clamp(left_speed, -MAX_SPEED, MAX_SPEED);
-    right_speed = clamp(right_speed, -MAX_SPEED, MAX_SPEED);
+    // Apply the regulate_speed function to ensure the speed stays within bounds
+    left_speed = regulate_speed(left_speed, -MAX_SPEED, MAX_SPEED);
+    right_speed = regulate_speed(right_speed, -MAX_SPEED, MAX_SPEED);
 
     // Set motor speeds
     wb_motor_set_velocity(left_motor, left_speed);
