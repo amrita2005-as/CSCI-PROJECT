@@ -1,136 +1,190 @@
-#include <webots/robot.h>
-#include <webots/light_sensor.h>
-#include <webots/distance_sensor.h>
-#include <webots/motor.h>
 #include <stdio.h>
-#include <stdbool.h>
-#include <math.h>  
+#include <webots/robot.h>
+#include <webots/motor.h>
+#include <webots/distance_sensor.h>
+#include <webots/light_sensor.h>
 #include <webots/gps.h>
+#include <math.h>
 
-#define TIME_STEP 64  // Time step for simulation in ms
-#define MAX_SPEED 6.28 // Maximum velocity of motor
-#define GPS_THRESHOLD 0.07 // Tolerance for GPS position comparison
+#define TIME_STEP 64       
+#define MAX_SPEED 6.28
+#define LIGHT_THRESHOLD 500.0
+#define WALL_THRESHOLD 100.0
+#define GPS_THRESHOLD 0.07 
+
+bool is_dead_end();
+
+double clamp(double value, double min_value, double max_value) {
+    if (value < min_value) {
+        return min_value;
+    } else if (value > max_value) {
+        return max_value;
+    }
+    return value;
+}
 
 int main(int argc, char **argv) {
+  // Initialize the Webots API
   wb_robot_init();
-
+  
+  // Define and enable the motors
   WbDeviceTag left_motor = wb_robot_get_device("left wheel motor");
   WbDeviceTag right_motor = wb_robot_get_device("right wheel motor");
   wb_motor_set_position(left_motor, INFINITY);
   wb_motor_set_position(right_motor, INFINITY);
-  wb_motor_set_velocity(left_motor, 0.0);
-  wb_motor_set_velocity(right_motor, 0.0);
-
-  WbDeviceTag ds_left = wb_robot_get_device("ps0");
-  WbDeviceTag ds_right = wb_robot_get_device("ps1");
-  WbDeviceTag light_sensor = wb_robot_get_device("ls0");
-
-  WbDeviceTag prox_sensors[8];
-  char prox_sensor_name[50];
+  
+  // Initialize motor speeds
+  double light_deadend[11];
+  double gps_coordinates[10][3]; 
+  double left_speed = MAX_SPEED;
+  double right_speed = MAX_SPEED;
+  int nest = 0;
+  double max = 0;
+  int j = 0;
+  
+  // Define and enable the distance sensors
+  WbDeviceTag distance_sensors[8];
+  char dist_sensor_name[50];
   for (int i = 0; i < 8; i++) {
-    sprintf(prox_sensor_name, "ps%d", i);
-    prox_sensors[i] = wb_robot_get_device(prox_sensor_name);
-    wb_distance_sensor_enable(prox_sensors[i], TIME_STEP);
+    sprintf(dist_sensor_name, "ps%d", i);
+    distance_sensors[i] = wb_robot_get_device(dist_sensor_name);
+    wb_distance_sensor_enable(distance_sensors[i], TIME_STEP);
   }
-
+  
+  // Define and enable the light sensor
+  WbDeviceTag light_sensor = wb_robot_get_device("ls0"); 
   wb_light_sensor_enable(light_sensor, TIME_STEP);
-  wb_distance_sensor_enable(ds_left, TIME_STEP);
-  wb_distance_sensor_enable(ds_right, TIME_STEP);
 
-  // Arrays for storing dead-end data (coordinates and light intensity)
-  double dead_end_coordinates[10][3];  // Store coordinates for up to 10 dead-ends
-  double dead_end_light[10];            // Store light intensity for up to 10 dead-ends
+  // Enable the GPS sensor
+  WbDeviceTag gps = wb_robot_get_device("gps");
+  wb_gps_enable(gps, TIME_STEP);
+
+  // Dead-end detection variables
   int dead_end_count = 0;
+  double dead_end_timer = 0;
 
-  // Variables for navigating to the brightest dead-end
-  double max_light_intensity = 0.0;
-  int brightest_dead_end = -1;
+  // Flag to stop the robot after reaching the target
+  bool target_reached = false;
 
+  // Function to check if the robot is in a dead-end
+  bool is_dead_end() {
+    double front_distance = wb_distance_sensor_get_value(distance_sensors[0]);
+    double current_time = wb_robot_get_time();
+
+    // If sensor [7] detects a wall and it's the first detection or in a new time window
+    if (front_distance > 100) {
+      if (dead_end_count == 0 || (current_time - dead_end_timer) > 1.7) {
+        // Reset timer on the first detection
+        dead_end_timer = current_time;
+        dead_end_count = dead_end_count + 1;
+      }
+    }
+
+    // If the counter has reached 2 detections within 4 seconds, detect a dead-end
+    if (dead_end_count >= 2) {
+      dead_end_count = 0; // 
+      return true;
+    }
+
+    // Reset dead-end count if time interval exceeds 4 seconds without detections
+    if ((current_time - dead_end_timer) > 10.0) {
+      dead_end_count = 0;
+    }
+    
+    return false;
+  }
+  
   // Main loop
   while (wb_robot_step(TIME_STEP) != -1) {
-    bool left_wall = wb_distance_sensor_get_value(prox_sensors[5]) > 80;
-    bool left_corner = wb_distance_sensor_get_value(prox_sensors[6]) > 80;
-    bool front_wall = wb_distance_sensor_get_value(prox_sensors[7]) > 80;
+    // Get the current GPS coordinates
+    const double *gps_values = wb_gps_get_values(gps);
 
-    double ds_left_value = wb_distance_sensor_get_value(ds_left);
-    double ds_right_value = wb_distance_sensor_get_value(ds_right);
-    printf("Left Sensor: %lf, Right Sensor: %lf\n", ds_left_value, ds_right_value);
+    // Read distance sensor values for wall-following
+    bool left_wall = wb_distance_sensor_get_value(distance_sensors[5]) > WALL_THRESHOLD;
+    bool left_corner = wb_distance_sensor_get_value(distance_sensors[6]) > WALL_THRESHOLD;
+    bool front_wall = wb_distance_sensor_get_value(distance_sensors[7]) > WALL_THRESHOLD;
 
-    // Read the light sensor value
+    // Read light sensor value to detect light sources
     double light_value = wb_light_sensor_get_value(light_sensor);
-    printf("Light Sensor Value: %f\n", light_value);
 
-    // Check if the robot is in a dead-end (both walls detected)
-    if (front_wall && left_wall) {
-      const double *gps_values = wb_gps_get_values(gps);
+    // Check for dead-end and handle it
+    if (is_dead_end()) {
+      // Stop briefly to record data or adjust if necessary
+      if (nest < 10) {
+        nest++;
+        light_deadend[nest] = light_value;
 
-      if (dead_end_count < 10) {
-        // Store the GPS coordinates and light intensity at the dead-end
-        dead_end_coordinates[dead_end_count][0] = gps_values[0];
-        dead_end_coordinates[dead_end_count][1] = gps_values[1];
-        dead_end_coordinates[dead_end_count][2] = gps_values[2];
-        dead_end_light[dead_end_count] = light_value;
+        // Get the GPS coordinates and store them (x, y, z)
+        gps_coordinates[nest - 1][0] = gps_values[0]; // x-coordinate
+        gps_coordinates[nest - 1][1] = gps_values[1]; // y-coordinate
+        gps_coordinates[nest - 1][2] = gps_values[2]; // z-coordinate
 
-        printf("Dead-end %d reached at coordinates: (%f, %f, %f)\n", dead_end_count + 1, 
-               gps_values[0], gps_values[1], gps_values[2]);
-        printf("Light intensity at dead-end %d: %f\n", dead_end_count + 1, light_value);
-
-        dead_end_count++;
-
-        // Update the brightest dead-end if current one has higher light intensity
-        if (light_value > max_light_intensity) {
-          max_light_intensity = light_value;
-          brightest_dead_end = dead_end_count - 1; // store the index of the brightest dead-end
-        }
+        printf("Dead-end %d reached.\n", nest);
+        printf("Light intensity recorded: %f\n", light_deadend[nest]);
+        printf("Coordinates logged: x = %f, y = %f, z = %f\n", gps_values[0], gps_values[1], gps_values[2]);
       }
-    }
 
-    // Check if we need to navigate to the brightest dead-end
-    if (brightest_dead_end >= 0) {
-      const double *gps_values = wb_gps_get_values(gps);
-
-      // Compare the current GPS position with the brightest dead-end coordinates
-      double distance_to_brightest = sqrt(pow(gps_values[0] - dead_end_coordinates[brightest_dead_end][0], 2) +
-                                          pow(gps_values[1] - dead_end_coordinates[brightest_dead_end][1], 2) +
-                                          pow(gps_values[2] - dead_end_coordinates[brightest_dead_end][2], 2));
-
-      // If close enough to the brightest dead-end, stop the robot
-      if (distance_to_brightest < GPS_THRESHOLD) {
-        printf("\n\nReached the brightest dead-end with light intensity: %f\n\n", max_light_intensity);
-        wb_motor_set_velocity(left_motor, 0);
-        wb_motor_set_velocity(right_motor, 0);
-        break; // Exit the loop after reaching the target
-      } else {
-        // Move towards the brightest dead-end (basic navigation)
-        double left_speed = MAX_SPEED;
-        double right_speed = MAX_SPEED;
-
-        // Navigate towards the brightest dead-end
-        if (gps_values[0] < dead_end_coordinates[brightest_dead_end][0]) {
-          left_speed = MAX_SPEED / 2;
-          right_speed = MAX_SPEED;
-        } else if (gps_values[0] > dead_end_coordinates[brightest_dead_end][0]) {
-          left_speed = MAX_SPEED;
-          right_speed = MAX_SPEED / 2;
+      if (nest == 10) {
+        // Loop through the array to find the greatest light value
+        for (int i = 1; i <= 10; i++) {
+          if (light_deadend[i] > max) {
+            max = light_deadend[i]; // Update max if a greater value is found
+            j = i;
+          }
         }
-
-        wb_motor_set_velocity(left_motor, left_speed);
-        wb_motor_set_velocity(right_motor, right_speed);
+        printf("Highest light intensity observed: %f at dead-end %d\n", max, j);
+        printf("Brightest location: x = %f, y = %f, z = %f\n",
+               gps_coordinates[j - 1][0], gps_coordinates[j - 1][1], gps_coordinates[j - 1][2]);
+        nest++;
       }
-    }
 
-    if (left_wall) {
-      left_speed = MAX_SPEED;
-      right_speed = MAX_SPEED;
+      // Check if the robot has reached the target dead-end location
+      if (fabs(gps_values[0] - gps_coordinates[j - 1][0]) < GPS_THRESHOLD &&
+          fabs(gps_values[1] - gps_coordinates[j - 1][1]) < GPS_THRESHOLD &&
+          fabs(gps_values[2] - gps_coordinates[j - 1][2]) < GPS_THRESHOLD) {
+          printf("\n\nTarget dead-end with maximum light intensity successfully reached!\n\n");
+          target_reached = true;
+      }
     } else {
-      left_speed = MAX_SPEED / 8;
-      right_speed = MAX_SPEED;
+      // Regular wall-following logic
+      if (front_wall) {
+        // Turn right if there's a wall in front
+        left_speed = MAX_SPEED;
+        right_speed = -MAX_SPEED;
+      } else {
+        if (left_wall) {
+          // Go forward if there's a wall on the left
+          left_speed = MAX_SPEED / 2;
+          right_speed = MAX_SPEED / 2;
+        } else if (left_corner) {
+          // Slight turn if a left corner is detected
+          left_speed = MAX_SPEED;
+          right_speed = MAX_SPEED / 4;
+        } else {
+          // Turn left if there's no wall on the left
+          left_speed = MAX_SPEED / 4;
+          right_speed = MAX_SPEED;
+        }
+      }
     }
 
+    // Apply the clamp function to ensure the speed stays within bounds
+    left_speed = clamp(left_speed, -MAX_SPEED, MAX_SPEED);
+    right_speed = clamp(right_speed, -MAX_SPEED, MAX_SPEED);
+
+    // Set motor speeds
     wb_motor_set_velocity(left_motor, left_speed);
     wb_motor_set_velocity(right_motor, right_speed);
+
+    // If the target dead-end has been reached, stop the robot
+    if (target_reached) {
+      wb_motor_set_velocity(left_motor, 0);
+      wb_motor_set_velocity(right_motor, 0);
+      break;
+    }
   }
 
+  // Cleanup the Webots API
   wb_robot_cleanup();
 
   return 0;
